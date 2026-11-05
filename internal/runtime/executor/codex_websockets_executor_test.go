@@ -554,6 +554,20 @@ func TestCodexAutoExecutorRequiredUpstreamWebsocketRejectsHTTPFallback(t *testin
 	}
 }
 
+func TestCodexAutoExecutorForcedHTTPDoesNotDiscardRequiredWebsocketContext(t *testing.T) {
+	exec := NewCodexAutoExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{ID: "codex-ws", Provider: "codex", Attributes: map[string]string{"websockets": "true"}}
+	ctx := cliproxyexecutor.WithCodexHTTPFallback(cliproxyexecutor.WithRequiredUpstreamWebsocket(cliproxyexecutor.WithDownstreamWebsocket(context.Background())))
+	req := cliproxyexecutor.Request{Model: "gpt-5.4", Payload: []byte(`{"previous_response_id":"resp-1","input":[]}`)}
+	_, errExecute := exec.Execute(ctx, auth, req, cliproxyexecutor.Options{})
+	_, errStream := exec.ExecuteStream(ctx, auth, req, cliproxyexecutor.Options{})
+	for _, err := range []error{errExecute, errStream} {
+		if !cliproxyexecutor.IsUpstreamWebsocketReplayRequired(err) {
+			t.Fatalf("error = %v, want full replay required before HTTP", err)
+		}
+	}
+}
+
 func TestCodexWebsocketUpgradeFallbackLocalErrorDoesNotMarkUpstreamAttempt(t *testing.T) {
 	tests := []struct {
 		name    string

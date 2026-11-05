@@ -298,6 +298,13 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 			if allowed, keepOpen := authorizePayload(payload, false); !allowed {
 				return keepOpen
 			}
+			if len(payload) >= cliproxyexecutor.CodexHTTPFallbackThreshold {
+				// A duplex stream owns the socket and does not retain full history.
+				// Reconnect with a full create so the handler can select HTTP before
+				// sending this request. Never replay an in-flight operation here.
+				fail(cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError())
+				return false
+			}
 			metadataMu.Lock()
 			isAppend := ojson.GetBytesNoCopy(payload, "type").String() == "response.append"
 			prevID := strings.TrimSpace(ojson.GetBytesNoCopy(payload, "previous_response_id").String())

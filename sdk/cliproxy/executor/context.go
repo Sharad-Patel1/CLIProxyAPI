@@ -5,8 +5,13 @@ import (
 	"sync/atomic"
 )
 
+// CodexHTTPFallbackThreshold is a conservative transport policy, not an
+// asserted upstream limit. Larger context replays use HTTP to avoid close 1009.
+const CodexHTTPFallbackThreshold = 8 << 20
+
 type downstreamWebsocketContextKey struct{}
 type requireUpstreamWebsocketContextKey struct{}
+type codexHTTPFallbackContextKey struct{}
 type upstreamAttemptTrackerContextKey struct{}
 
 type upstreamAttemptTracker struct {
@@ -47,6 +52,21 @@ func RequiredUpstreamWebsocket(ctx context.Context) bool {
 	raw := ctx.Value(requireUpstreamWebsocketContextKey{})
 	enabled, ok := raw.(bool)
 	return ok && enabled
+}
+
+// WithCodexHTTPFallback selects HTTP for a full-context Codex request while
+// preserving the downstream websocket identity. Incremental requests that still
+// require an upstream socket must be replayed with full context first.
+func WithCodexHTTPFallback(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, codexHTTPFallbackContextKey{}, true)
+}
+
+// CodexHTTPFallback reports whether a full-context request should use HTTP upstream.
+func CodexHTTPFallback(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(codexHTTPFallbackContextKey{}) == true
 }
 
 // WithUpstreamAttemptTracker installs a fresh tracker for one provider execution attempt.

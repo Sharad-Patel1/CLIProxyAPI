@@ -21,12 +21,30 @@ The TTL is refreshed by activity. Bindings are retained across changing quota ra
 
 Codex needs both sides configured: `supports_websockets = true` in the client provider and `"websockets": true` in each hub Codex OAuth credential. Keep `ws-auth: true` on legacy hub configs. No latency percentage is claimed; verify actual upstream WebSocket use before measuring performance.
 
+Codex context requests of 8 MiB or more switch to HTTP upstream before sending.
+This is a conservative routing threshold, not a claimed OpenAI limit. It avoids
+the upstream close-1009 loop observed with a 25,102,631-byte compaction request.
+The client socket stays open and receives the HTTP response as WebSocket events.
+That connection then retains canonical history for HTTP continuations, including
+replacement by a compacted transcript, and preserves its account binding. Small
+requests on fresh connections still use WebSockets. `/responses/compact` continues
+to use its existing HTTP implementation.
+
+A large delta whose history exists only on the upstream socket is rejected with
+`previous_response_not_found` before sending; the client must supply full context.
+In native duplex steering mode, a large follow-up closes with the existing HTTP
+replay signal, so a fresh full-context connection can select HTTP. The gateway
+never retries an already submitted operation to change transport. The regression
+tests exercise the real handler and executor at the captured failure size,
+continuations, account binding, compaction replacement, and duplex reconnect.
+
 ## Validation
 
 ```sh
 gofmt -l sdk/cliproxy/auth/selector_smart_burn*.go sdk/cliproxy/service_config_smart_burn_test.go
 go test ./sdk/cliproxy/auth ./sdk/cliproxy
 go test -race ./sdk/cliproxy/auth -run 'TestSmartBurn|TestManagerSessionAffinityAliasCooldownPreservesSelection|TestManagerAliasQuotaFailoverWithUnobservedTargetModel'
+go test -race ./sdk/api/handlers/openai ./internal/runtime/executor -run 'TestResponsesWebsocket(Large|DuplexLarge)|TestCodexAutoExecutor.*HTTP'
 go test ./...
 go vet ./...
 go build -trimpath -o bin/cliproxyapi ./cmd/server

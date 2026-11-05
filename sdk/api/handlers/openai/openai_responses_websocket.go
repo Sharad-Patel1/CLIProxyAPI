@@ -459,6 +459,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	passthroughModelName := ""
 	upstreamMode := responsesWebsocketUpstreamModeUnknown
 	upstreamWebsocketAuthID := ""
+	// Stay on HTTP after an oversized request so later deltas can be expanded
+	// against the canonical history retained by this handler.
+	codexHTTPFallback := false
 	sessionAuthByIDWithSource := func(authID string) (*coreauth.Auth, bool, bool) {
 		if h == nil || h.AuthManager == nil {
 			return nil, false, false
@@ -634,6 +637,21 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				useUpstreamWebsocketPassthrough = provider == "codex" || provider == "xai"
 			}
 		}
+		useCodexHTTP := false
+		if !routeOverridesModelResolution && (codexHTTPFallback || len(payload) >= cliproxyexecutor.CodexHTTPFallbackThreshold) {
+			providerSet, _ := responsesWebsocketProviderSetForModel(responsesWebsocketResolvedModelName(requestModelName))
+			_, codexModel := providerSet["codex"]
+			if codexModel && len(providerSet) == 1 {
+				if !codexHTTPFallback {
+					log.Infof("responses websocket: selecting HTTP for large Codex context id=%s bytes=%d", passthroughSessionID, len(payload))
+				}
+				codexHTTPFallback = true
+				useCodexHTTP = true
+			}
+		}
+		if useCodexHTTP {
+			useUpstreamWebsocketPassthrough = false
+		}
 		nativeWebsocketPassthrough := !routeOverridesModelResolution && responsesWebsocketNativePassthroughAllowed(
 			upstreamMode,
 			useUpstreamWebsocketPassthrough,
@@ -641,6 +659,15 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			upstreamWebsocketAuthID,
 		)
 		requestRequiresCurrentUpstreamWebsocket := responsesWebsocketRequestRequiresCurrentUpstream(payload)
+		if useCodexHTTP && upstreamMode == responsesWebsocketUpstreamModeWS && requestRequiresCurrentUpstreamWebsocket {
+			// Native websocket turns deliberately retain no full history locally.
+			// Ask for it before HTTP, without submitting or retrying this delta.
+			if errWrite := writeResponsesWebsocketPreviousResponseNotFound(writer, wsTimelineLog, payload); errWrite != nil {
+				wsTerminateErr = errWrite
+				return
+			}
+			continue
+		}
 		if upstreamMode == responsesWebsocketUpstreamModeWS && !nativeWebsocketPassthrough {
 			if requestRequiresCurrentUpstreamWebsocket {
 				replayErr := responsesWebsocketHTTPReplayRequiredError()
@@ -838,8 +865,11 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		turnStartEpoch := inputEpoch.Load()
 		cliCtx, cliCancel := h.GetContextWithCancel(h, c, executionParent)
 		cliCtx = cliproxyexecutor.WithDownstreamWebsocket(cliCtx)
+		if useCodexHTTP {
+			cliCtx = cliproxyexecutor.WithCodexHTTPFallback(cliCtx)
+		}
 		cliCtx = cliproxyexecutor.WithWebsocketInputEpoch(cliCtx, &inputEpoch, msgEpoch)
-		if duplexInput != nil {
+		if duplexInput != nil && !useCodexHTTP {
 			cliCtx = cliproxyexecutor.WithWebsocketInput(cliCtx, duplexInput)
 			cliCtx = cliproxyexecutor.WithWebsocketAuthCheck(cliCtx, func(authID string) bool {
 				current, ok := sessionAuthByID(authID)
@@ -879,6 +909,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				return
 			}
 			attemptedUpstreamMode = upstreamModeForAuth(selectedAuth)
+			if useCodexHTTP && strings.EqualFold(selectedAuth.Provider, "codex") {
+				attemptedUpstreamMode = responsesWebsocketUpstreamModeHTTP
+			}
 			codexDuplexStream.Store(duplexInput != nil && attemptedUpstreamMode == responsesWebsocketUpstreamModeWS && strings.EqualFold(strings.TrimSpace(selectedAuth.Provider), "codex"))
 			preserveNativeOutput.Store(nativeRequest && strings.EqualFold(strings.TrimSpace(selectedAuth.Provider), "codex"))
 		})
@@ -1002,6 +1035,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			lastResponsePendingToolCallIDs = nil
 		} else {
 			upstreamWebsocketAuthID = ""
+			if useCodexHTTP && lastAttemptedAuthID != "" {
+				rememberPinnedAuth(lastAttemptedAuthID, modelName)
+			}
 			lastRequest = nextLastRequest
 			lastResponseOutput = completedOutput
 			if inputContainsFullTranscript(util.ParseGJSONBytesNoCopy(completedOutput)) {
