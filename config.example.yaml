@@ -167,7 +167,16 @@ access:
 
 # Routing strategy for selecting credentials when multiple match.
 routing:
-  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first
+  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first, smart-burn
+  # smart-burn selects the eligible account whose weekly quota resets soonest.
+  # Claude 7d and Codex 10080-minute windows take precedence over short windows.
+  # Short windows are the fallback when an account has no future weekly reset.
+  # Missing/expired quota dates receive at most one discovery selection per account
+  # every five minutes, using an ordinary incoming request. Otherwise known reset
+  # dates win; ties use credential ID, and all-unknown pools use round-robin.
+  # No upstream quota polling is added. Keep session-affinity enabled so existing
+  # sessions retain their account as quota rankings change. Existing priority,
+  # eligibility, cooldown, model support and WebSocket rules still apply.
   # weighted-round-robin uses each credential's integer weight (default 1, maximum 1,000,000).
   # Non-positive weights exclude the credential while this strategy is active.
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.
