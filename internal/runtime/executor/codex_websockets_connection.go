@@ -18,6 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/capture"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/proxyutil"
@@ -56,7 +57,7 @@ func (e *CodexWebsocketsExecutor) dialCodexWebsocket(ctx context.Context, auth *
 	return conn, closer, resp, err
 }
 
-func writeWebsocketPayloadMessage(provider string, sess *codexWebsocketSession, conn *websocket.Conn, payload []byte) error {
+func writeWebsocketPayloadMessage(ctx context.Context, provider string, sess *codexWebsocketSession, conn *websocket.Conn, payload []byte) error {
 	provider = strings.TrimSpace(provider)
 	if provider == "" {
 		provider = "codex"
@@ -82,11 +83,12 @@ func writeWebsocketPayloadMessage(provider string, sess *codexWebsocketSession, 
 	} else {
 		log.Debugf("%s websockets: write payload completed session=%s session_object=%s bytes=%d duration=%v", provider, sessionID, sessionKind, payloadBytes, time.Since(start))
 	}
+	capture.Frame(ctx, "provider.request", provider, payload, errSend)
 	return errSend
 }
 
-func writeCodexWebsocketMessage(sess *codexWebsocketSession, conn *websocket.Conn, payload []byte) error {
-	return writeWebsocketPayloadMessage("codex", sess, conn, payload)
+func writeCodexWebsocketMessage(ctx context.Context, sess *codexWebsocketSession, conn *websocket.Conn, payload []byte) error {
+	return writeWebsocketPayloadMessage(ctx, "codex", sess, conn, payload)
 }
 
 func mapCodexWebsocketWriteError(sess *codexWebsocketSession, conn *websocket.Conn, err error) error {
@@ -198,7 +200,8 @@ func frameCodexWebsocketRequestBody(body []byte) []byte {
 	return body
 }
 
-func readCodexWebsocketMessage(ctx context.Context, sess *codexWebsocketSession, conn *websocket.Conn, readCh chan codexWebsocketRead) (int, []byte, error) {
+func readCodexWebsocketMessage(ctx context.Context, sess *codexWebsocketSession, conn *websocket.Conn, readCh chan codexWebsocketRead) (messageType int, data []byte, resultErr error) {
+	defer func() { capture.Frame(ctx, "provider.response", "codex", data, resultErr) }()
 	if sess == nil {
 		if conn == nil {
 			return 0, nil, fmt.Errorf("codex websockets executor: websocket conn is nil")

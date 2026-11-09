@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/capture"
 	"io"
 	"net/http"
 	"strings"
@@ -303,7 +304,9 @@ func writeResponsesWebsocketPayload(writer *responsesWebsocketWriter, wsTimeline
 	if writer.closing.Load() {
 		return websocket.ErrCloseSent
 	}
-	return writer.conn.WriteMessage(websocket.TextMessage, payload)
+	err := writer.conn.WriteMessage(websocket.TextMessage, payload)
+	capture.Frame(writer.captureCtx, "client.response", "", payload, err)
+	return err
 }
 
 func appendWebsocketTimelineDisconnect(timeline websocketTimelineAppender, err error, timestamp time.Time) {

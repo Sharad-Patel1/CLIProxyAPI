@@ -6,6 +6,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/capture"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
 )
@@ -38,9 +40,16 @@ func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPass
 	if host != nil {
 		builder = builder.WithPluginHost(host)
 	}
+	var recorder *capture.Recorder
+	if dir := os.Getenv("AI_LEDGER_SPOOL_DIR"); dir != "" {
+		recorder = capture.NewRecorder(dir, 64<<20)
+		builder = builder.WithServerOptions(api.WithMiddleware(recorder.Middleware()))
+	}
 	if len(serverOptions) > 0 {
 		builder = builder.WithServerOptions(serverOptions...)
 	}
+
+	defer recorder.Close()
 
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -82,6 +91,11 @@ func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string,
 	if host != nil {
 		builder = builder.WithPluginHost(host)
 	}
+	var recorder *capture.Recorder
+	if dir := os.Getenv("AI_LEDGER_SPOOL_DIR"); dir != "" {
+		recorder = capture.NewRecorder(dir, 64<<20)
+		builder = builder.WithServerOptions(api.WithMiddleware(recorder.Middleware()))
+	}
 	if len(serverOptions) > 0 {
 		builder = builder.WithServerOptions(serverOptions...)
 	}
@@ -91,6 +105,7 @@ func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string,
 
 	service, err := builder.Build()
 	if err != nil {
+		recorder.Close()
 		log.Errorf("failed to build proxy service: %v", err)
 		close(doneCh)
 		return cancelFn, doneCh
@@ -98,6 +113,7 @@ func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string,
 
 	go func() {
 		defer close(doneCh)
+		defer recorder.Close()
 		if err := service.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Errorf("proxy service exited with error: %v", err)
 		}

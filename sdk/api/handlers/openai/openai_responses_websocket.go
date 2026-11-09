@@ -123,9 +123,10 @@ func websocketClosePayloadForUpstreamError(err error) (bool, []byte) {
 }
 
 type responsesWebsocketWriter struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
-	closing atomic.Bool
+	conn       *websocket.Conn
+	writeMu    sync.Mutex
+	closing    atomic.Bool
+	captureCtx context.Context
 }
 
 func newResponsesWebsocketWriter(conn *websocket.Conn) *responsesWebsocketWriter {
@@ -356,6 +357,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		return
 	}
 	writer := newResponsesWebsocketWriter(conn)
+	writer.captureCtx = c.Request.Context()
 	passthroughSessionID := uuid.NewString()
 	// After the upgrade, error-only HTTP logs cannot consume deferred bodies.
 	// Apply the policy before routing so plugin callbacks inherit it as well.

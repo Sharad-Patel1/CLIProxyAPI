@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/capture"
 	"net/http"
 	"strings"
 	"sync"
@@ -158,6 +159,7 @@ func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCause
 		defer close(input)
 		for {
 			kind, payload, errRead := conn.ReadMessage()
+			capture.Frame(ctx, "client.request", "", payload, errRead)
 			if errRead != nil {
 				cancel(errRead)
 				return
