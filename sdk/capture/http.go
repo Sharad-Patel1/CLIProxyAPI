@@ -26,7 +26,7 @@ func (r *Recorder) Middleware() gin.HandlerFunc {
 		ctx = httptransport.WithDecorator(ctx, func(next http.RoundTripper) http.RoundTripper { return &transport{next: next} })
 		c.Request = c.Request.WithContext(ctx)
 		input := Open(ctx, map[string]string{"boundary": "client.request", "transport": "http", "method": c.Request.Method, "path": path,
-			"content_type": c.Request.Header.Get("Content-Type"), "client_request_id": c.Request.Header.Get("X-Request-ID"),
+			"content_type": c.Request.Header.Get("Content-Type"), "content_encoding": c.Request.Header.Get("Content-Encoding"), "client_request_id": c.Request.Header.Get("X-Request-ID"),
 			"user_agent": c.Request.Header.Get("User-Agent")})
 		if c.Request.Body != nil && c.Request.Body != http.NoBody {
 			c.Request.Body = &bodyReader{ReadCloser: c.Request.Body, stream: input}
@@ -38,6 +38,8 @@ func (r *Recorder) Middleware() gin.HandlerFunc {
 		c.Writer = writer
 		defer func() {
 			input.End(false, nil)
+			output.Attributes(map[string]string{"content_type": c.Writer.Header().Get("Content-Type"),
+				"content_encoding": c.Writer.Header().Get("Content-Encoding")})
 			output.End(true, nil)
 			r.submit(observation{kind: "request.close", request: value.request,
 				metadata: map[string]string{"status": strconv.Itoa(writer.Status())}})

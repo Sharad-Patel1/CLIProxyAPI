@@ -150,6 +150,17 @@ func (s *Stream) End(complete bool, err error) {
 	s.emit("stream.close", metadata, nil)
 }
 
+func (s *Stream) Attributes(metadata map[string]string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.emit("stream.metadata", metadata, nil)
+	}
+}
+
 // Frame observes exactly one complete message and whether its write succeeded.
 // The raw provider response ID remains the authority for invocation attribution.
 func Frame(ctx context.Context, boundary string, provider string, payload []byte, err error) {

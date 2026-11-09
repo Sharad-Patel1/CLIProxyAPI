@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
@@ -204,5 +205,30 @@ func TestDecoratorPreservesFinalBodiesPolicyAndCredentialsExclusion(t *testing.T
 	}
 	if len(boundaries) != 4 {
 		t.Fatalf("missing boundaries: %v", boundaries)
+	}
+}
+
+func TestCompressedClientResponseRetainsFinalEncodingMetadata(t *testing.T) {
+	r := NewRecorder(t.TempDir(), 1<<20)
+	engine := gin.New()
+	engine.Use(r.Middleware())
+	engine.GET("/v1/responses", func(c *gin.Context) {
+		c.Header("Content-Encoding", "gzip")
+		c.Header("Content-Type", "application/json")
+		writer := gzip.NewWriter(c.Writer)
+		_, _ = writer.Write([]byte(`{"answer":"preserved"}`))
+		_ = writer.Close()
+	})
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest("GET", "/v1/responses", nil))
+	r.Close()
+	found := false
+	for _, record := range records(t, r.dir) {
+		if record.Get("kind").String() == "stream.metadata" && record.Get("metadata.content_encoding").String() == "gzip" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("response compression metadata missing")
 	}
 }
